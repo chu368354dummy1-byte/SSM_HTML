@@ -3,6 +3,11 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 URL = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 HTML_DIR = "html"
 LOG_DIR = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "capture.log")
@@ -22,7 +27,7 @@ def main():
     filepath = os.path.join(HTML_DIR, filename)
 
     try:
-        resp = requests.get(URL, timeout=30)
+        resp = requests.get(URL, headers=HEADERS, timeout=30)
         resp.raise_for_status()
     except Exception as e:
         log(f"FAILED to fetch {URL}: {e}")
