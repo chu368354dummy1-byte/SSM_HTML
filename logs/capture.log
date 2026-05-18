@@ -7,3 +7,6 @@
 Call log:
   - navigating to "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch", waiting until "networkidle"
 
+[2026-05-18 17:54:49] Warming up on https://www.ssm.gov.mo ...
+[2026-05-18 17:54:51] Fetching https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch ...
+[2026-05-18 17:55:23] OK  2026-05-18_17-55-23.html (30.7 KB)
