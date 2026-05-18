@@ -1,3 +1,9 @@
 [2026-05-18 15:30:56] FAILED to fetch https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch: 403 Client Error: Forbidden for url: https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch
 [2026-05-18 17:44:17] Warming up session on https://www.ssm.gov.mo …
 [2026-05-18 17:44:22] FAILED HTTP 403 for https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch: 403 Client Error: Forbidden for url: https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch
+[2026-05-18 17:50:02] Warming up on https://www.ssm.gov.mo ...
+[2026-05-18 17:50:05] Fetching https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch ...
+[2026-05-18 17:51:20] FAILED to fetch https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch: Page.goto: Timeout 45000ms exceeded.
+Call log:
+  - navigating to "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch", waiting until "networkidle"
+
