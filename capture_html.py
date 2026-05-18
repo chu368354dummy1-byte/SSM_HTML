@@ -1,11 +1,14 @@
 """
-capture.py – fetch SSM waiting-time page using Playwright (GitHub Actions compatible).
+capture.py – fetch SSM waiting-time page, bypassing Cloudflare Turnstile.
+Requires: pip install playwright playwright-stealth
+          playwright install chromium --with-deps
 """
 
 import os
 import random
 from datetime import datetime, timezone, timedelta
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright_stealth import stealth_sync
 
 URL      = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
 BASE_URL = "https://www.ssm.gov.mo"
@@ -15,6 +18,14 @@ LOG_DIR  = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "capture.log")
 TZ       = timezone(timedelta(hours=8))
 
+CLOUDFLARE_MARKERS = [
+    "challenges.cloudflare.com",
+    "cf-turnstile",
+    "正在執行安全驗證",
+    "Just a moment",
+    "Enable JavaScript and cookies to continue",
+]
+
 
 def log(msg: str) -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -23,6 +34,10 @@ def log(msg: str) -> None:
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     print(line)
+
+
+def is_cloudflare_challenge(html: str) -> bool:
+    return any(marker in html for marker in CLOUDFLARE_MARKERS)
 
 
 def fetch_html() -> str:
@@ -56,29 +71,36 @@ def fetch_html() -> str:
             java_script_enabled=True,
         )
 
-        ctx.add_init_script("""
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        """)
-
         page = ctx.new_page()
+
+        # Apply deep stealth patches (disables all Playwright fingerprint leaks)
+        stealth_sync(page)
 
         # Step 1 – homepage warm-up
         log(f"Warming up on {BASE_URL} ...")
         try:
             page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(random.randint(1000, 2000))
+            page.wait_for_timeout(random.randint(2000, 4000))
         except PWTimeout:
             log("Homepage timed-out; continuing.")
 
-        # Step 2 – target page: use "load" instead of "networkidle"
-        # "networkidle" waits for ALL network activity to stop — but this page
-        # keeps polling in the background, so it never settles and times out.
-        # "load" fires as soon as the window.load event fires (~10s here), then
-        # we wait an extra 2s for any JS rendering to finish.
+        # Step 2 – target page
         log(f"Fetching {URL} ...")
         page.goto(URL, wait_until="load", timeout=30_000)
-        page.wait_for_timeout(2000)  # let JS render the waiting-time data
 
+        # Wait up to 20s for Cloudflare to auto-resolve the managed challenge
+        log("Waiting for Cloudflare challenge to resolve ...")
+        for i in range(20):
+            page.wait_for_timeout(1000)
+            html = page.content()
+            if not is_cloudflare_challenge(html):
+                log(f"Challenge passed after {i + 1}s.")
+                browser.close()
+                return html
+            if i % 5 == 4:
+                log(f"  Still on challenge page ({i + 1}s elapsed) ...")
+
+        # Final content — return whatever we have and let the caller detect failure
         html = page.content()
         browser.close()
         return html
@@ -91,6 +113,10 @@ def main() -> None:
         html = fetch_html()
     except Exception as e:
         log(f"FAILED to fetch {URL}: {e}")
+        return
+
+    if is_cloudflare_challenge(html):
+        log("FAILED – still on Cloudflare challenge page after timeout.")
         return
 
     now      = datetime.now(TZ)
