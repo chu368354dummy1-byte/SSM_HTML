@@ -30,13 +30,13 @@ def fetch_html() -> str:
         browser = pw.chromium.launch(
             headless=True,
             args=[
-                "--no-sandbox",                              # required in GHA / Docker
-                "--disable-setuid-sandbox",                  # required in GHA / Docker
-                "--disable-dev-shm-usage",                   # /dev/shm is tiny in GHA
-                "--disable-gpu",                             # no GPU in CI
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
                 "--disable-blink-features=AutomationControlled",
                 "--disable-extensions",
-                "--single-process",                          # more stable in constrained envs
+                "--single-process",
             ],
         )
 
@@ -66,18 +66,18 @@ def fetch_html() -> str:
         log(f"Warming up on {BASE_URL} ...")
         try:
             page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(random.randint(1500, 3000))
+            page.wait_for_timeout(random.randint(1000, 2000))
         except PWTimeout:
             log("Homepage timed-out; continuing.")
 
-        # Step 2 – target page
+        # Step 2 – target page: use "load" instead of "networkidle"
+        # "networkidle" waits for ALL network activity to stop — but this page
+        # keeps polling in the background, so it never settles and times out.
+        # "load" fires as soon as the window.load event fires (~10s here), then
+        # we wait an extra 2s for any JS rendering to finish.
         log(f"Fetching {URL} ...")
-        page.goto(URL, wait_until="networkidle", timeout=45_000)
-
-        try:
-            page.wait_for_selector("table, .waiting, #content", timeout=15_000)
-        except PWTimeout:
-            log("Target selector not found – saving whatever rendered.")
+        page.goto(URL, wait_until="load", timeout=30_000)
+        page.wait_for_timeout(2000)  # let JS render the waiting-time data
 
         html = page.content()
         browser.close()
