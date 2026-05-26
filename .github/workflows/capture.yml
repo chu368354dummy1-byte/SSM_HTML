@@ -27,7 +27,7 @@ jobs:
         run: pip install curl-cffi requests
 
       - name: Capture HTML
-        run: python capture.py
+        run: python capture_html.py
 
       - name: Show log on failure
         if: failure()
