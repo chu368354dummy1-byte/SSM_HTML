@@ -1,12 +1,11 @@
 """
-capture.py – fetch SSM waiting-time page without a headless browser.
+capture_html.py – fetch SSM waiting-time page via Cloudflare Worker proxy.
 
-Strategy (tries in order):
-  1. curl_cffi  – Chrome TLS/HTTP2 impersonation (best Cloudflare bypass)
-  2. requests   – plain HTTPS with realistic headers (fast fallback)
+The Worker runs inside CF's network, so the SSM portal (also behind CF)
+sees a trusted CF-to-CF request instead of a GitHub Actions datacenter IP.
 
-Install:
-  pip install curl-cffi requests
+Install:  pip install requests
+Env vars: CF_WORKER_URL, CF_PROXY_SECRET
 """
 
 import os
@@ -14,12 +13,13 @@ import time
 import random
 from datetime import datetime, timezone, timedelta
 
-URL      = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
-BASE_URL = "https://www.ssm.gov.mo"
-HTML_DIR = "html"
-LOG_DIR  = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "capture.log")
-TZ       = timezone(timedelta(hours=8))
+import requests
+
+TARGET_URL = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
+HTML_DIR   = "html"
+LOG_DIR    = "logs"
+LOG_FILE   = os.path.join(LOG_DIR, "capture.log")
+TZ         = timezone(timedelta(hours=8))
 
 CLOUDFLARE_MARKERS = [
     "challenges.cloudflare.com",
@@ -28,25 +28,6 @@ CLOUDFLARE_MARKERS = [
     "Just a moment",
     "Enable JavaScript and cookies to continue",
 ]
-
-HEADERS = {
-    "Accept":           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language":  "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Accept-Encoding":  "gzip, deflate, br",
-    "Cache-Control":    "no-cache",
-    "Pragma":           "no-cache",
-    "Referer":          BASE_URL + "/",
-    "Sec-Fetch-Dest":   "document",
-    "Sec-Fetch-Mode":   "navigate",
-    "Sec-Fetch-Site":   "same-origin",
-    "Sec-Fetch-User":   "?1",
-    "Upgrade-Insecure-Requests": "1",
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125.0.0.0 Safari/537.36"
-    ),
-}
 
 
 def log(msg: str) -> None:
@@ -62,56 +43,30 @@ def is_cloudflare_challenge(html: str) -> bool:
     return any(marker in html for marker in CLOUDFLARE_MARKERS)
 
 
-# ── Strategy 1: curl_cffi (Chrome TLS impersonation) ─────────────────────────
-
-def fetch_with_curl_cffi() -> str:
-    from curl_cffi import requests as cffi_requests
-
-    log("Trying curl_cffi (Chrome TLS impersonation) ...")
-    session = cffi_requests.Session(impersonate="chrome124")
-
-    # Warm-up: visit homepage first to get cookies
-    session.get(BASE_URL, headers=HEADERS, timeout=20)
-    time.sleep(random.uniform(1.5, 3.0))
-
-    resp = session.get(URL, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
-    return resp.text
-
-
-# ── Strategy 2: plain requests ────────────────────────────────────────────────
-
-def fetch_with_requests() -> str:
-    import requests
-
-    log("Trying requests (plain HTTPS) ...")
-    session = requests.Session()
-
-    # Warm-up: visit homepage first to get cookies
-    session.get(BASE_URL, headers=HEADERS, timeout=20)
-    time.sleep(random.uniform(1.5, 3.0))
-
-    resp = session.get(URL, headers=HEADERS, timeout=20)
-    resp.raise_for_status()
-    return resp.text
-
-
-# ── Orchestrator ──────────────────────────────────────────────────────────────
-
 def fetch_html() -> str:
-    strategies = [fetch_with_curl_cffi, fetch_with_requests]
+    worker_url = os.environ.get("CF_WORKER_URL", "").rstrip("/")
+    secret     = os.environ.get("CF_PROXY_SECRET", "")
 
-    for strategy in strategies:
-        try:
-            html = strategy()
-            if not is_cloudflare_challenge(html):
-                log(f"Success with {strategy.__name__}.")
-                return html
-            log(f"{strategy.__name__} returned a Cloudflare challenge page.")
-        except Exception as e:
-            log(f"{strategy.__name__} failed: {e}")
+    if not worker_url:
+        raise RuntimeError("CF_WORKER_URL environment variable is not set.")
 
-    raise RuntimeError("All fetch strategies failed.")
+    proxy_url = f"{worker_url}?url={TARGET_URL}"
+    log(f"Fetching via CF Worker: {proxy_url}")
+
+    time.sleep(random.uniform(1.0, 3.0))   # avoid thundering-herd on the hour
+
+    resp = requests.get(
+        proxy_url,
+        headers={"x-proxy-secret": secret},
+        timeout=30,
+    )
+    resp.raise_for_status()
+
+    html = resp.text
+    if is_cloudflare_challenge(html):
+        raise RuntimeError("Response is still a Cloudflare challenge page.")
+
+    return html
 
 
 def main() -> None:
