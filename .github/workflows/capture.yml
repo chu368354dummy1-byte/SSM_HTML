@@ -1,30 +1,35 @@
 name: Hourly HTML Capture
+
 on:
   schedule:
-    # - cron: "0 * * * *"
+    - cron: "0 * * * *"
   workflow_dispatch:
+
 jobs:
   capture:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install dependencies
-        run: pip install playwright playwright-stealth
-      - name: Install Chromium
-        run: playwright install chromium --with-deps
+        run: pip install curl-cffi requests
+
       - name: Capture HTML
-        run: python capture_html.py
+        run: python capture.py
+
       - name: Commit and push
         run: |
-          git config user.name "github-actions[bot]"
+          git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --staged --quiet || git commit -m "Hourly snapshot $(date -u '+%Y-%m-%d_%H-%M-%S')"
+          git diff --staged --quiet || git commit -m "snapshot $(date -u '+%Y-%m-%d_%H-%M-%S')"
           git push
