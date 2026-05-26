@@ -41,11 +41,7 @@ def fetch_html() -> str:
         raise RuntimeError("CF_WORKER_URL is not set.")
 
     proxy_url = f"{worker_url}?" + urlencode({"url": TARGET_URL})
-
-    # Log partial URL and whether secret was loaded (never log the secret itself)
-    log(f"Worker URL: {worker_url}")
-    log(f"Secret loaded: {'yes' if secret else 'NO - empty!'}")
-    log(f"Full proxy URL: {proxy_url}")
+    log(f"Fetching via CF Worker ...")
 
     time.sleep(random.uniform(1.0, 3.0))
 
@@ -56,6 +52,9 @@ def fetch_html() -> str:
     )
 
     log(f"HTTP status: {resp.status_code}")
+    log(f"Response length: {len(resp.text)} chars")
+    log(f"Response preview: {resp.text[:200]}")  # first 200 chars
+
     resp.raise_for_status()
 
     html = resp.text
