@@ -1,18 +1,8 @@
-"""
-capture_html.py – fetch SSM waiting-time page via Cloudflare Worker proxy.
-
-The Worker runs inside CF's network, so the SSM portal (also behind CF)
-sees a trusted CF-to-CF request instead of a GitHub Actions datacenter IP.
-
-Install:  pip install requests
-Env vars: CF_WORKER_URL, CF_PROXY_SECRET
-"""
-
 import os
 import time
 import random
 from datetime import datetime, timezone, timedelta
-
+from urllib.parse import urlencode
 import requests
 
 TARGET_URL = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
@@ -48,23 +38,29 @@ def fetch_html() -> str:
     secret     = os.environ.get("CF_PROXY_SECRET", "")
 
     if not worker_url:
-        raise RuntimeError("CF_WORKER_URL environment variable is not set.")
+        raise RuntimeError("CF_WORKER_URL is not set.")
 
-    proxy_url = f"{worker_url}?url={TARGET_URL}"
-    log(f"Fetching via CF Worker: {proxy_url}")
+    proxy_url = f"{worker_url}?" + urlencode({"url": TARGET_URL})
 
-    time.sleep(random.uniform(1.0, 3.0))   # avoid thundering-herd on the hour
+    # Log partial URL and whether secret was loaded (never log the secret itself)
+    log(f"Worker URL: {worker_url}")
+    log(f"Secret loaded: {'yes' if secret else 'NO - empty!'}")
+    log(f"Full proxy URL: {proxy_url}")
+
+    time.sleep(random.uniform(1.0, 3.0))
 
     resp = requests.get(
         proxy_url,
         headers={"x-proxy-secret": secret},
         timeout=30,
     )
+
+    log(f"HTTP status: {resp.status_code}")
     resp.raise_for_status()
 
     html = resp.text
     if is_cloudflare_challenge(html):
-        raise RuntimeError("Response is still a Cloudflare challenge page.")
+        raise RuntimeError("Response is a Cloudflare challenge page.")
 
     return html
 
