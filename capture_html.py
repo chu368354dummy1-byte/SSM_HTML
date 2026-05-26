@@ -1,18 +1,21 @@
 """
-capture.py – fetch SSM waiting-time page, bypassing Cloudflare Turnstile.
-Requires: pip install playwright playwright-stealth
-          playwright install chromium --with-deps
+capture.py – fetch SSM waiting-time page without a headless browser.
+
+Strategy (tries in order):
+  1. curl_cffi  – Chrome TLS/HTTP2 impersonation (best Cloudflare bypass)
+  2. requests   – plain HTTPS with realistic headers (fast fallback)
+
+Install:
+  pip install curl-cffi requests
 """
 
 import os
+import time
 import random
 from datetime import datetime, timezone, timedelta
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-from playwright_stealth import stealth_sync
 
 URL      = "https://www.ssm.gov.mo/portal1/waitingsmy?lang=ch"
 BASE_URL = "https://www.ssm.gov.mo"
-
 HTML_DIR = "html"
 LOG_DIR  = "logs"
 LOG_FILE = os.path.join(LOG_DIR, "capture.log")
@@ -25,6 +28,25 @@ CLOUDFLARE_MARKERS = [
     "Just a moment",
     "Enable JavaScript and cookies to continue",
 ]
+
+HEADERS = {
+    "Accept":           "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language":  "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept-Encoding":  "gzip, deflate, br",
+    "Cache-Control":    "no-cache",
+    "Pragma":           "no-cache",
+    "Referer":          BASE_URL + "/",
+    "Sec-Fetch-Dest":   "document",
+    "Sec-Fetch-Mode":   "navigate",
+    "Sec-Fetch-Site":   "same-origin",
+    "Sec-Fetch-User":   "?1",
+    "Upgrade-Insecure-Requests": "1",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+}
 
 
 def log(msg: str) -> None:
@@ -40,70 +62,56 @@ def is_cloudflare_challenge(html: str) -> bool:
     return any(marker in html for marker in CLOUDFLARE_MARKERS)
 
 
+# ── Strategy 1: curl_cffi (Chrome TLS impersonation) ─────────────────────────
+
+def fetch_with_curl_cffi() -> str:
+    from curl_cffi import requests as cffi_requests
+
+    log("Trying curl_cffi (Chrome TLS impersonation) ...")
+    session = cffi_requests.Session(impersonate="chrome124")
+
+    # Warm-up: visit homepage first to get cookies
+    session.get(BASE_URL, headers=HEADERS, timeout=20)
+    time.sleep(random.uniform(1.5, 3.0))
+
+    resp = session.get(URL, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+    return resp.text
+
+
+# ── Strategy 2: plain requests ────────────────────────────────────────────────
+
+def fetch_with_requests() -> str:
+    import requests
+
+    log("Trying requests (plain HTTPS) ...")
+    session = requests.Session()
+
+    # Warm-up: visit homepage first to get cookies
+    session.get(BASE_URL, headers=HEADERS, timeout=20)
+    time.sleep(random.uniform(1.5, 3.0))
+
+    resp = session.get(URL, headers=HEADERS, timeout=20)
+    resp.raise_for_status()
+    return resp.text
+
+
+# ── Orchestrator ──────────────────────────────────────────────────────────────
+
 def fetch_html() -> str:
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-                "--disable-extensions",
-                "--single-process",
-            ],
-        )
+    strategies = [fetch_with_curl_cffi, fetch_with_requests]
 
-        ctx = browser.new_context(
-            viewport=random.choice([
-                {"width": 1920, "height": 1080},
-                {"width": 1440, "height": 900},
-                {"width": 1366, "height": 768},
-            ]),
-            locale="zh-TW",
-            timezone_id="Asia/Macau",
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            java_script_enabled=True,
-        )
-
-        page = ctx.new_page()
-
-        # Apply deep stealth patches (disables all Playwright fingerprint leaks)
-        stealth_sync(page)
-
-        # Step 1 – homepage warm-up
-        log(f"Warming up on {BASE_URL} ...")
+    for strategy in strategies:
         try:
-            page.goto(BASE_URL, wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(random.randint(2000, 4000))
-        except PWTimeout:
-            log("Homepage timed-out; continuing.")
-
-        # Step 2 – target page
-        log(f"Fetching {URL} ...")
-        page.goto(URL, wait_until="load", timeout=30_000)
-
-        # Wait up to 20s for Cloudflare to auto-resolve the managed challenge
-        log("Waiting for Cloudflare challenge to resolve ...")
-        for i in range(20):
-            page.wait_for_timeout(1000)
-            html = page.content()
+            html = strategy()
             if not is_cloudflare_challenge(html):
-                log(f"Challenge passed after {i + 1}s.")
-                browser.close()
+                log(f"Success with {strategy.__name__}.")
                 return html
-            if i % 5 == 4:
-                log(f"  Still on challenge page ({i + 1}s elapsed) ...")
+            log(f"{strategy.__name__} returned a Cloudflare challenge page.")
+        except Exception as e:
+            log(f"{strategy.__name__} failed: {e}")
 
-        # Final content — return whatever we have and let the caller detect failure
-        html = page.content()
-        browser.close()
-        return html
+    raise RuntimeError("All fetch strategies failed.")
 
 
 def main() -> None:
@@ -112,26 +120,17 @@ def main() -> None:
     try:
         html = fetch_html()
     except Exception as e:
-        log(f"FAILED to fetch {URL}: {e}")
-        return
-
-    if is_cloudflare_challenge(html):
-        log("FAILED – still on Cloudflare challenge page after timeout.")
-        return
+        log(f"FATAL: {e}")
+        raise SystemExit(1)
 
     now      = datetime.now(TZ)
     filename = now.strftime("%Y-%m-%d_%H-%M-%S") + ".html"
     filepath = os.path.join(HTML_DIR, filename)
 
-    try:
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(html)
-    except Exception as e:
-        log(f"FAILED to write {filepath}: {e}")
-        return
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(html)
 
-    size_kb = len(html) / 1024
-    log(f"OK  {filename} ({size_kb:.1f} KB)")
+    log(f"OK  {filename} ({len(html)/1024:.1f} KB)")
 
 
 if __name__ == "__main__":
