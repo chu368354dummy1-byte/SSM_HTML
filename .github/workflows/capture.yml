@@ -26,11 +26,20 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: Capture HTML
+      - name: Capture HTML      
         env:
           CF_WORKER_URL:    ${{ secrets.CF_WORKER_URL }}
           CF_PROXY_SECRET:  ${{ secrets.CF_PROXY_SECRET }}
         run: python capture_html.py
+
+      - name: Debug Worker
+        env:
+          CF_WORKER_URL: ${{ secrets.CF_WORKER_URL }}
+          CF_PROXY_SECRET: ${{ secrets.CF_PROXY_SECRET }}
+        run: |
+          curl -v \
+            -H "x-proxy-secret: $CF_PROXY_SECRET" \
+            "$CF_WORKER_URL?debug=1"
 
       - name: Show log on failure
         if: failure()
